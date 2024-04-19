@@ -1,0 +1,45 @@
+---
+title: "PRÁCTICA 9"
+author: "Eric Jiménez Barril"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(lmtest)
+library(zoo)
+library(forecast)
+library(TSA)
+library(tseries)
+library(tidyverse)
+library(dplyr)
+library(stats)
+```
+### Práctica 1.1
+Cargamos los datos que corresponden al valor promedio anual de unas acciones.
+
+En primer lugar, miramos la serie
+
+```{r}
+data9 <- read.table("prac9TS.txt")
+plot.ts(data9)
+```
+Parece que no tiene tendencia ni estacionalidad.
+```{r}
+adf.test(data9$x)
+```
+Obtenemos un p-valor menor que 0.01 por lo que rechazamos la hipótesi nula, es decir que la serie es estacionaria (según este test).
+
+Veamos si tiene tendencia
+```{r}
+data9<- data9$x
+t <- 1:length(data9)
+dadeslm <- lm(data9 ~ t)
+summary(dadeslm)
+```
+Obtenemos que el pvalor del coeficiente que acompaña la `t` es mayor que 0.05 por lo que no podemos rechazar la hipótesi nula de que es estadisticamente 0, por lo que rechazamos que tenga tendencia (la media es constante). 
+
+```{r}
+
+```

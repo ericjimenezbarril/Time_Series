@@ -1,0 +1,14 @@
+1.1. % de aumento del pico más bajo al más alto (variación porcentual) 
+1.2 cuantos trimestres transcurren. 
+1.3+1.4 Lo mismo en la nacional?
+1.5 Son iguales los comportamientos?
+
+2.1 Mayor descenso entre trimestre y trimestre
+2.2 Mayor descenso entre trimestre y trimestre nacional
+2.3 Iguales?
+
+3.1 Menor descenso entre trimestre y trimestre
+3.2 Nacional
+3.3 Igual?
+
+4.1 Se ha alcanzado actualmente el pico más alto? Variación total?

@@ -1,0 +1,427 @@
+---
+title: "Lliurament 13"
+author: "Eric Jiménez Barril"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# ENTREGA 13
+
+```{r, include=FALSE}
+library(forecast)
+library(tseries)
+library(TSA)
+library(fGarch)
+library(lmtest)
+require(zoo)
+library(stats)
+library(ggplot2)
+library(dplyr)
+```
+
+## LECTURA DE LES DADES
+
+```{r, dades}
+setwd("C:/Users/ERIC/Desktop/5. SERIES TEMPORALES/PRÁCTICAS/LLIURAMENT 2")
+Palencia <- read.table("Palencia.csv", header=T); head(Palencia)
+head(Palencia)
+tail(Palencia)
+```
+
+Podemos observar cómo los datos constan de 8 columnas, de las que sólo nos interesan las 2 últimas, que son el total de defunciones y la semana.
+
+```{r}
+Palencia <- Palencia %>%
+  dplyr::select(Periodo, Total.1)
+head(Palencia)
+cat("El total de valores faltantes para los datos Total.1 es ", sum(is.na(Palencia$Total.1)))
+tail(Palencia, 52)
+```
+
+Veamos si todos los años tienen las mismas semanas.
+
+```{r}
+semanes_per_any <-c(1, rep(0, 23)) #Ponemos la primera de 2023
+a = 1
+ano = 2000
+for (i in 2:length(Palencia$Periodo)){
+  if(substr(Palencia$Periodo[i], 1, 4)==substr(Palencia$Periodo[i-1], 1, 4)){
+    semanes_per_any[a]=semanes_per_any[a]+1
+  }
+  else{
+    a=a+1
+    semanes_per_any[a]=semanes_per_any[a]+1
+  }
+}
+for (i in 1:length(semanes_per_any)){
+  cat("El año ", ano+(i-1), "tiene ", semanes_per_any[i], "semanas \n")
+}
+semanes_per_any
+```
+
+No todos los años tienen igual número de semanas. De hecho, los datos de 2023 llegan hasta la semana 44. Tal y como se indica, tomamos los datos de las primeras 52 semanas de cada año entre 2010 y 2022.
+
+Si observamos el vector, debemos sacar la 261, 522, 835, la 1096 y las 44 últimas.
+
+Para facilitar la escritura, invertimos los datos.
+
+```{r, invertir dades}
+Palencia <- as.data.frame(lapply(Palencia, rev))
+files_a_excluir = c(261, 522, 835, 1096, 1201:1244)
+Total <- Palencia[-files_a_excluir,]
+nrow(Total)
+```
+
+Veiem que total, per construcció si que satisfà que tots els anys tenen mateixa setmana.
+
+```{r}
+semanes_per_any <-c(1, rep(0, 23))
+a = 1
+for (i in 2:length(Total$Periodo)){
+  if(substr(Total$Periodo[i], 1, 4)==substr(Total$Periodo[i-1], 1, 4)){
+    semanes_per_any[a]=semanes_per_any[a]+1
+  }
+  else{
+    a=a+1
+    semanes_per_any[a]=semanes_per_any[a]+1
+  }
+}
+semanes_per_any
+```
+
+Por tanto, podemos pasar a estudiar los datos y construir el modelo.
+
+## ESTUDIO DE LOS DATOS
+
+Empezamos dibujando la serie junto a su media global y la media móvil.
+
+Primeramente nos definimos la serie de los datos.
+
+```{r}
+Dates <- Total$Periodo[521:(sum(semanes_per_any))]
+Total <- ts(Total$Total.1[521:(sum(semanes_per_any))], frequency=52, start=c(2010,01), end=c(2022,52))
+```
+
+```{r}
+plot(Total, ylab="Defunciones", xlab="Semanas", main="Defunciones por semana en Palencia entre 2010 y 2022")
+abline(h=mean(Total), col="red", lwd=2)
+lines(ma(Total, order = 52, centre = T),col="blue", lwd=2)
+legend('topleft', legend=c('Serie `Total`','Media', 'Media Móvil'), col=c('black','red', 'blue'), lty=c(1, 1,1), lwd=c(1,1.5, 1.5), cex=1)
+mean(Total)
+```
+
+Podemos observar que la media movil no se ajusta del todo a la media. Además, es claro que la varianza de la serie no es constante, hay diferentes clusters de volatilidad y picos que resaltan al resto. Veamos, creando una regresión lineal, si la serie tiene tendencia, la cual en caso de existir, aparentemente será creciente.
+
+```{r}
+t <- 1:(length(Total))
+total.lm <- lm(Total ~ t)
+total.lm
+```
+
+Observamos como la media era 41.36982 y el intercept de la regresión es de 38.26930, lo que puede indicar que hay una cierta tendencia ya que, la varianza no es constante y en caso de que no hubiera tendencia, la media coincidiria con el intercept.
+
+Veamos pues que este valor que se da al coeficiente que acompaña a la *t* es significativo.
+
+```{r}
+coeftest(total.lm)
+```
+
+Obtenemos que el test que se hace sobre el coeficiente que acompaña a la *t* con hipótesi nula que el coeficiente es 0, tiene *pvalor* menor que 0.001 por lo que rechazamos la hipótesi nula con un $99.9\%$ de confianza, por tanto la serie tiene tendencia.
+
+Veamos ahora si tiene estacionalidad. En primer lugar, en caso de tener tendría que ser anual. Así que estudiemos la estacionalidad anual o trimestral, pensando que cada trimestre tiene 13 semanas.
+
+```{r}
+matrix_data=matrix(data=Total, nrow=52)
+matrix_data_t=t(matrix_data)
+boxplot(matrix_data_t)
+```
+
+Se observa que los boxs no se ajustan a los mismos rangos de valores, por lo que parece haber una estacionalidad anual. Estudiemos también si puede haber una estacionalidad trimestral.
+
+```{r}
+matrix_data=matrix(data=Total, nrow=13)
+matrix_data_t=t(matrix_data)
+boxplot(matrix_data_t)
+```
+
+En este caso, tampoco parece que los clusters se ajusten a los mismos rangos de valores, pero no parece que haya una estacionalidad trimestral, pues la diferencia de valores es baja en comparación a la varianza que observamos en el *box plot* anual.
+Estudiamos pues si hay estacionalidad con el truco basado en el likelihood ratio test.
+
+```{r}
+fit1 <- ets(as.vector(Total))
+fit2 <- ets(as.vector(Total), model="AZN")
+deviance <- 2*c(logLik(fit1) - logLik(fit2))
+df <- attributes(logLik(fit1))$df - attributes(logLik(fit2))$df 
+#P value
+1-pchisq(deviance,df) ### H0: No es estacional / H1: es estacional
+```
+
+Según este test, si que hay una estacionalidad. Por último, podríamos comprobarlo con la función decompose.
+
+```{r}
+plot(decompose(Total)$seasonal, ylab="Estacionalidad en las Defunciones", xlab="Semanas", main="Componente estacional de la serie `Total`")
+```
+
+En efecto, se observa una estacionalidad significativa, pues va entre los valores -10 y \~ 15, lo que representa aproximadamente un 30$\%$ de la varianza global de los datos. Por tanto podemos afirmar que hay una estacionalidad anual.
+
+Con tal de poder hacer un modelo para la serie, la diferenciamos por la primera diferencia para suavizar la tendencia y por la diferencia 52 para eliminar la estacionalidad. Aún así, seguiremos teniendo el problema de la varianza.
+
+```{r}
+Total_diff1_52 <- diff(diff(Total), lag=52)
+
+plot.ts(Total_diff1_52, ylab="Diferencia de Defunciones", xlab="Semanas", main="Diferencias de orden 1 y posteriormente 52 de \n las Defunciones por semana en Palencia entre 2010 y 2022")
+abline(h=mean(Total_diff1_52), col="red", lwd=2)
+lines(ma(Total_diff1_52, order = 52, centre = T),col="blue", lwd=2)
+legend('topleft', legend=c('Serie `Total_diff1_52`','Media', 'Media Móvil'), col=c('black','red', 'blue'), lty=c(1, 1,1), lwd=c(1,1.5, 1.5), cex=1)
+```
+
+Notamos que esta nueva serie tiene la media movil de orden 52 practicamente igual a la media global, lo que indica que no hay estacionalidad. Además, la serie parece tener media constante. Veamos que no tiene estacionalidad. Podemos de nuevo verlo de las 3 maneras.
+
+Veamos primero el box-plot creando los 52 grupos.
+
+```{r}
+matrix_data=matrix(data=Total_diff1_52, nrow=52)
+matrix_data_t=t(matrix_data)
+boxplot(matrix_data_t)
+```
+
+Es claro que no hay una estacionalidad significativa. Todos los clusters estan practicamente alineados. Veamos que si aplicamos el truco basado en el likelihood ratio test, obtenemos un *pvalor* mayor que 0.05.
+
+```{r}
+fit1 <- ets(as.vector(Total_diff1_52))
+fit2 <- ets(as.vector(Total_diff1_52), model="AZN")
+deviance <- 2*c(logLik(fit1) - logLik(fit2))
+df <- attributes(logLik(fit1))$df - attributes(logLik(fit2))$df 
+#P value
+1-pchisq(deviance,df) 
+```
+
+Obtenemos el *pvalor* = 1 por lo que no tenemos evidencias para rechazar la hipótesi nula de que los datos no tienen componente estacional. Por último, podemos asegurarnos observando la gráfica del decompose
+
+```{r}
+plot(decompose(Total_diff1_52)$seasonal, ylab="Estacionalidad en las Diferencias de Defunciones", xlab="Semanas", main="Componente estacional de la serie `Total_diff1_52`")
+```
+
+Esta función siempre devuelve una estacionalidad por pequeña que sea. La estacionalidad que nos devuelve va entre -3 y 3, por lo que no la consideraremos significativa teniendo en cuenta que la serie diferenciada varía entre -40 y 40 y viendo los dos resultados anteriores.
+
+Veamos si esta serie es o no estacionaria.
+
+Hagamos la prueba de Dickey-Fuller, que tiene como hipótesi nula que existe una raíz unitaria y por tanto la serie no es estacionaria, y la anternativa es que no tiene una raíz unitaria y la serie es estacionaria. Por lo que el test de Dickey-Fuller nos dice si un test es no estacionario (no rechazando la hipótesi nula), pero no podemos afirmar que si sea estacionario en caso de que la rechacemos.
+
+```{r}
+adf.test(Total_diff1_52)
+```
+
+Según la prueba de Dickey-Fuller la serie es estacionaria, pues rechazamos la hipótesi nula.
+No obstante, observando el gráfico cualitativamente se puede observar que la varianza no es contante, por tanto no podemos afirmar que sea estacionaria en la varianza y por tanto no puede ser estacionaria. 
+
+Veamos que modelo propondríamos para la serie, considerando que es estacionaria, basándonos en la eacf, acf y pacf
+
+```{r}
+eacf(Total_diff1_52)
+par(mfrow=c(2,1))
+acf(Total_diff1_52)
+pacf(Total_diff1_52, main="")
+par(mfrow=c(1,1))
+```
+
+Basándonos en la EACF nos decantaríamos por un MA(1) o ARMA(2,3). Basándonos también en la PACF y ACF observamos que la PACF decae a 0 de forma exponencial mientras que la ACF es estadísticamente nula a partir del segundo *lag*. Por lo que nos decantamos por un modelo MA(1).
+
+## MODELO PARA LA SERIE `TOTAL`
+
+Veamos ahora que nos propone la función auto.arima. 
+
+```{r}
+mod1 <- auto.arima(Total)
+mod1
+```
+Notamos que nos recomienda un modelo *ARIMA(1,1,2)(0,0,1)[52]* con *drift*, es decir, nos recomienda un modelo *ARIMA(1,1,2)* para la componente no estacional y un modelo *SARIMA(0,0,1)[52]* para la componente estacional.
+
+Hagamos un test sobre los residuos para ver si son o no significativos.
+
+```{r}
+coeftest(mod1)
+```
+
+Notamos que todos los coeficientes son significativos con una confianza del 99$\%$ (el drift es una constante que representa el *intercept*, no un coeficiente), por lo todos los coeficientes de nuestro modelo son significativos.
+
+Estudiemos los residuos, para ver si el modelo es acecuado.
+
+```{r}
+checkresiduals(mod1)
+```
+
+A pesar de que observando la ACF parece quee hay en varios *lags* donde el valor está fuera del intervalo de confianza, es decir, no parece que los residuos sean ruido blanco, notamos que el *Ljung-Box test* nos da un *p-valor* de 0.1076 por lo que no podemos rechazar la hipótesi nula de que los residuos sean independientes, por lo que a priori no podemos descartar este como un buen modelo para nuestra serie. Veamos con el *Shapiro-Wilks test* si tienen distribución normal.
+
+```{r}
+shapiro.test(mod1$residuals)
+```
+En este caso obtenemos un $p-valor$ de $4.297 \times 10^{-5}$ por lo que rechazamos la hipótesi nula de que los datos se distribuyan con una distribución normal. 
+
+
+## PREDICCIÓN 2023
+
+Hagamos las predicciones para 2023 con el modelo propuesto por auto.arima y lo comparamos con los valores reales que ya tenemos de 2023
+
+```{r}
+pred1 <- forecast(mod1, h=52)
+plot(pred1, xlab="Semanas", ylab="Defunciones", main="Predicciones del modelo ARIMA(1,1,2)(0,0,1)[52] \n con drift para 2023")
+```
+Observamos que la predicción no parece muy precisa, ya que el modelo nos predice aproximadamente la media, pero veamos si los valores reales están dentro de los intervalos de confianza para estudiar la bondad de ajuste del modelo.
+
+Fijamos la confianza 95$\%$ y dibujamos los datos reales junto a los predichos y los intervalos de confianza.
+
+
+```{r}
+real <- ts(tail(Palencia,44)$Total.1, frequency=52, start=c(2023,01), end=c(2023,44))
+plot(pred1$mean, type='l', lwd=2, col='blue', xlab='Semanas', ylab='Valores Predichos con IC', main='Valores Predichos con Intervalos de Confianza', ylim=c(0, 100))
+lines(pred1$lower[,2], col='black', lty=3, lwd=2)  # Línea punteada para el límite inferior del IC
+lines(pred1$upper[,2], col='black', lty=3, lwd=2)  # Línea punteada para el límite superior del IC
+lines(real, col='red', lwd=2)
+legend('topleft', legend=c('Valores Reales','Valores Predichos', 'Intervalo de Confianza'), col=c('red','blue', 'gray'), lty=c(1, 1,2), lwd=c(2,2, 1), cex=0.8)
+```
+
+Notamos que la predicción es mejor de lo que pensábamos. De hecho todos los valores están dentro del intervalo 95$\%$.
+
+### ESTUDIO DE LOS RESIDUOS
+
+Estudiamos de nuevo los residuos y añadimos el estudio de los residuos al cuadrado de la serie. 
+
+```{r}
+pacf(mod1$residuals)
+par(mfrow=c(1,1))
+plot((mod1$residuals)^2, ylab="Residuos al cuadrado", xlab="Semanas")
+par(mfrow=c(2,1))
+acf((mod1$residuals)^2, main="Serie Residuos al Cuadrado")
+pacf((mod1$residuals)^2, main="")
+par(mfrow=c(1,1))
+```
+
+Como ya habíamos dicho antes, el *Ljung-Box Test* parecía indicar que los residuos eran ruido blanco pero aparentenmente la varianza de estos no es constante. Además, podemos confirmar que el cuadrado de los residuos ni son incorrelacionados ni tienen varianza constante. Por lo que parece claro que la estructura GARCH parece razonable. 
+
+Veamos que modelo GARCH nos recomienda la función garch() para nuestros datos.
+
+```{r}
+mod2 <- garch(Total); mod2
+```
+Nos recomienda un modelo GARCH(1,1) para nuestros datos. Veamos otros modelos y estudiemos cual se ajusta mejor a nuestros datos.
+
+```{r}
+mod3 <- garch(Total, order=c(0, 1))
+mod4 <- garch(Total, order=c(1, 1))
+mod5 <- garch(Total, order=c(1, 2))
+```
+```{r}
+data.frame(AIC=c(AIC(mod3), AIC(mod4), AIC(mod5)))
+```
+El mejor modelo es el GARCH(1,1) como ya habíamos predicho con la función garch para nuestra serie original. 
+
+```{r}
+mod4 <- garchFit(~garch(1,1), Total)
+coef(mod4)
+```
+
+
+
+
+### AJUSTE DE UN MODELO AÑADIENDO EL REGRESOR COVID
+Nuestra serie temporal va del 2010 al 2022 con datos semanales, con 52 semanas por año. Para añadir una variable con la que poder definir el COVID como regresor, añadimos un vector de 0 y 1, que tenga 0 en todos los valores excepto en las semanas que van de la seguna semana de marzo de 2020 a final de 2021. Es decir, a partir de la semana 10 de 2020 a la 52 de 2021.
+```{r}
+COVID<-c(rep(0,531), rep(1,93), rep(0,52)) 
+length(COVID) == length(Total)
+```
+Veamos si la variable es o no significativa para predecir la serie.
+
+```{r}
+Total.lm2 <- lm(Total~COVID)
+Total.lm2
+```
+Observamso que parece significativa pues el coeficiente que acompaña al regresor `COVID` tiene un valor de 5.705. De todas formas hacemos el test para ver si es significativa.
+
+```{r}
+coeftest(Total.lm2)
+```
+En efecto, el coeficiente es significativo.
+Veamos que modelo nos propone auto.arima() para la serie Total añadiendo el regresor.
+
+```{r}
+mod_cov <- auto.arima(Total, xreg=COVID)
+mod_cov
+```
+Notamos que obtenemos en este caso un modelo ARIMA(2,0,2)(0,0,1)[52] con intercept i la variable COVID.
+Tiene mejor AIC que todos los modelos anteriores por lo que podría indicar que es mejor modelo que todos los anteriores. 
+Veamos en primer lugar si todos los coeficientes son significativos.
+
+```{r}
+coeftest(mod_cov)
+```
+Notamos que todos los coeficientes excepto el coeficiente del AR1 son significativos.
+Definimos pues el modelo fijando que el primer coeficiente del AR sea 0.
+
+```{r}
+mod_cov <- arima(Total, order=c(2,0,2), seasonal=list(order=c(0,0,1), period=52), xreg=COVID, include.mean=TRUE, fixed=c(0, NA, NA, NA, NA, NA, NA))
+mod_cov
+```
+Observamos que este modelo tiene mejor AIC. Veamos que además los coeficientes son significativos.
+```{r}
+coeftest(mod_cov)
+```
+En efecto, todos los coeficientes son significativos.
+Estudiamos los residuos del modelo.
+
+```{r}
+checkresiduals(mod_cov)
+```
+En este caso, con el *Ljung-Box Test* rechazamos la hipótesi nula por lo que los residuos sean independientes, además tanto en el ACF como el plot de los residuos se observa que no tienen varianza constante. 
+
+Hagamos las predicciones con este modelo. 
+
+```{r}
+pred2 <- forecast(mod_cov, h = 52, xreg=numeric(52))
+plot(pred2)
+```
+Observamos que, de nuevo, la predicción no parece muy precisa, además en este caso, al no diferenciar la serie, los intervalos no muestran tendencia por lo que parece un peor ajuste, pero veamos si los valores reales están dentro de los intervalos de confianza para estudiar la bondad de ajuste del modelo.
+
+Fijamos la confianza 95$\%$ y dibujamos los datos reales junto a los predichos y los intervalos de confianza.
+
+
+```{r}
+plot(pred2$mean, type='l', lwd=2, col='blue', xlab='Semanas', ylab='Valores Predichos con IC', main='Valores Predichos con Intervalos de Confianza', ylim=c(0, 100))
+lines(pred2$lower[,2], col='black', lty=3, lwd=2)  # Línea punteada para el límite inferior del IC
+lines(pred2$upper[,2], col='black', lty=3, lwd=2)  # Línea punteada para el límite superior del IC
+lines(real, col='red', lwd=2)
+legend('topleft', legend=c('Valores Reales','Valores Predichos', 'Intervalo de Confianza'), col=c('red','blue', 'gray'), lty=c(1, 1,2), lwd=c(2,2, 1), cex=0.8)
+```
+
+En este caso observamos que hay uno de los valores que cae fuera del intervalo de confianza. Esto nos indica que el modelo predice peor que el anterior, lo que no cuadra con que tenga mejor AIC, ya que además usa más variables. 
+
+Calculamos el RMSE  de ambos modelos.
+```{r}
+rmse1 = sqrt(mean((mod1$residuals)^2))
+rmse2 = sqrt(mean((mod_cov$residuals)^2))
+c(rmse1, rmse2)
+```
+Lo calculamos también para los valores predichos
+```{r}
+rmse11 = sqrt(mean((pred1$mean - real)^2))
+rmse21 = sqrt(mean((pred2$mean - real)^2))
+c(rmse11, rmse21)
+```
+
+Calculamos también el R2.
+
+```{r}
+SSR1 = sum((mod1$residuals)^2)
+SST1 = sum((Total - mean(Total))^2)
+
+SSR2 = sum((mod_cov$residuals)^2)
+
+c(1- SSR1/SST1, 1- SSR2/SST1)
+```
+
+
+
